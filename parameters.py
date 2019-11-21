@@ -14,7 +14,7 @@ LSTM_LEARNING_RATE = 0.01
 TINY = 1e-6 # to avoid NaNs in logs
 RECURRENT_DROPOUT_PROB = 0.90
 LSTM_BATCH_SIZE = 100
-SEQ_LENGTH = 500 #100 timesteps
+SEQ_LENGTH = 500 
 
 #Dataset hyperparameters
 DATASET_SIZE =  500000

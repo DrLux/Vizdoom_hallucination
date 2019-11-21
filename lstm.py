@@ -15,18 +15,17 @@ class LSTM(object):
 
         self.num_mixture = parameters.MIXTURE 
         self.latent_size = parameters.LATENT_SIZE
-        self.seq_length = parameters.SEQ_LENGTH # assume every sample has same length.
+        self.seq_length = parameters.SEQ_LENGTH - 1 # leave last timestap for the target. X from 0 to N-1 and Y from 1 to N
         self.input_size = parameters.INPUT_SIZE    
         self.dim_cell_state = parameters.DIM_CELL_STATE
         self.tiny = parameters.TINY         
         self.learning_rate = parameters.LSTM_LEARNING_RATE
         self.batch_size = parameters.LSTM_BATCH_SIZE
 
+        #session
         self.sess = None
-        self.batch_enc_frames = None
-        self.batch_action = None
-        self.batch_restart = None
-
+        self.assign_ops = {} #dictionary to collect assignment operations to reload the model weights
+        
         #placeholders
         self.batch_obs = None
         self.batch_action = None
@@ -40,7 +39,6 @@ class LSTM(object):
         #lstm cell
         self.cell = None
         self.initial_state = None
-        #self.final_state = None
         self.outputs = None #for each time stamp collect lstm state (c,h) each one with shape (batch_size,lstm_state)
         
         #loss value
@@ -53,32 +51,44 @@ class LSTM(object):
             self.graph = tf.Graph() 
             with self.graph.as_default():
                 #init routines
-                #self.init_sess()
                 self.init_cell()
                 self.define_placeholder()
                 self.forward_pass()
                 predicted_restart_flag,output_for_mdn = self.activation_function_RNN()
                 self.mdn(output_for_mdn,predicted_restart_flag)
+                self.init_sess()
+                self.collect_assign_ops()
+                #self.train_lstm_mdn()
                 #self.get_parameters()
 
+    def train_lstm_mdn(self):
+        batch_encoded_frames,batch_actions,batch_reset = self.dataset.split_dataset_into_batches()            
+        
+        for i in range(0,400):
+            z_cost,reset_cost,_,total_cost = self.sess.run([self.z_cost, self.reset_cost, self.optimizer,self.total_cost], {self.batch_obs: batch_encoded_frames[0], self.batch_action: batch_actions[0],self.batch_restart_flags: batch_reset[0]})
+            print("Epoch: ", i)
+            #print("z_cost: ", z_cost)
+            #print("Reset_cost: ", reset_cost)
+            print("total_cost: ", total_cost)
+        
 
     #this is directly from https://github.com/hardmaru/WorldModelsExperiments/blob/master/doomrnn/doomrnn.py
     # I didn't find the specific formula online 
     def z_loss_func(self,log_mix_coef,mean,logstd):
         # reshape target data so that it is compatible with prediction shape
         # reshape in ordert to have a lot of vectors with a single dimension
-        # from shape=(100, 500, 64) to shape=(3200000, 1)
+        # from shape=(100, 499, 64) to shape=(3193600, 1)
         flat_target_z = tf.reshape(self.target_obs,[-1, 1])
 
-        print("self.target_obs: ", self.target_obs)
-        print("flat_target_z: ", flat_target_z)
-        print("mean: ", mean)
-
-        assert 1 == 2, "ciaooo"
 
         logSqrtTwoPI = np.log(np.sqrt(2.0 * np.pi))
-        tf_lognormal = -0.5 * ((flat_target_z - mean) / tf.exp(logstd)) ** 2 - logstd - logSqrtTwoPI
+
+        #tf_lognormal have shape=(3193600, 5) (broadcast flat_target_z to mean)
+        tf_lognormal = -0.5 * ((flat_target_z - mean) / tf.exp(logstd)) ** 2 - logstd - logSqrtTwoPI      
+        
+        #v.shape==(3193600, 1)
         v = tf.reduce_logsumexp(log_mix_coef + tf_lognormal, 1, keepdims=True)
+
         return -tf.reduce_mean(v)
 
     def restart_loss_fun(self,predicted_restart_flag):
@@ -91,13 +101,13 @@ class LSTM(object):
         #factor = tf.ones_like(r_cost) + flat_target_restart * (self.hps.restart_factor-1.0)
         #return tf.reduce_mean(tf.multiply(factor, r_cost))
 
-        return r_cost
+        return tf.reduce_mean(r_cost)
 
     def mdn(self,mdn_input,predicted_restart_flag):
-        #mdn_input = # shape=(3200000, 15) 
+        #mdn_input = # shape=(3193600, 15)
 
         #extract the parameters of each of 5 gaussian
-        #each one have shape(3200000, 5)
+        #each one have shape(3193600, 5)
         #PERCHÉ DICE CHE IN OUTPUT HA GIA IL LOGMIX? NON DOVREI IO FARE IL LOG DEL RISULTATO?
         log_mix_coef, mean, logstd = tf.split(mdn_input, 3, 1) 
 
@@ -112,18 +122,6 @@ class LSTM(object):
 
         self.optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(self.total_cost)
 
-        #####################
-        # Tensorflow RUN
-        self.init_sess()
-        batch_encoded_frames,batch_actions,batch_reset = self.dataset.split_dataset_into_batches()            
-        z_cost,reset_cost,_ = self.sess.run([self.z_cost, self.reset_cost, self.optimizer], {self.batch_obs: batch_encoded_frames[0], self.batch_action: batch_actions[0],self.batch_restart_flags: batch_reset[0]})
-        print("z_cost,reset_cost: ", z_cost,reset_cost)
-        # Fine Tensorflow RUN
-        ##########################
-
-        assert 1 == 2, "ciao"
-        
-
     #The output of rnn is processed with a linear activation function to produce MDN input
     def activation_function_RNN(self):
         # the final output must have the shape of the MDN input -> total = 961
@@ -136,21 +134,21 @@ class LSTM(object):
             output_w = tf.get_variable("rnn_output_w", [self.dim_cell_state, SIZE_FINAL_OUTPUT])
             output_b = tf.get_variable("rnn_output_b", [SIZE_FINAL_OUTPUT])
 
-        #output: concatenate all batch data for each timestamp into one big vector with length = lstm_state. --> from (500,100,512) to  shape=(50000, 512)
+        #output: concatenate all batch data for each timestamp into one big vector with length = lstm_state. --> from (499,100,512) to  shape=(49900, 512)
         output = tf.reshape(tf.concat(self.outputs, axis=1), [-1, self.dim_cell_state])
-        
-        output = tf.reshape(output, [-1, self.dim_cell_state]) #questa riga mi sembra inutile. in teoria trasforma [1,2,3] in [[1,2,3]]. IN pratica non sembra cambiare la shape e se la togli non cambia il risultato 
 
-        #shape:  (50000, 961) -> 50000 = batch_size * seq_len 
+        #output = tf.reshape(output, [-1, self.dim_cell_state]) #questa riga mi sembra inutile. in teoria trasforma [1,2,3] in [[1,2,3]]. IN pratica non sembra cambiare la shape e se la togli non cambia il risultato 
+       
+        #shape:  (49900, 961) -> 50000 = batch_size * seq_len 
         output = tf.nn.xw_plus_b(output, output_w, output_b)
        
-        #shape: (50000,)
+        #shape: (49900,)
         predicted_restart_flag = output[:, 0] #the first dimension will take care of restart flags
 
-        #shape:  (50000, 960)
+        #shape:  (49900, 960)
         output_for_mdn = output[:, 1:] #the output values expect the restart_flags in first dimension            
         
-        # shape=(3200000, 15): reshape data into a 15dimensional vector (num gaussian mixtrue * parameters to indicate a gaussian mixture)
+        # shape=(3193600, 15): reshape data into a 15dimensional vector (num gaussian mixtrue * parameters to indicate a gaussian mixture)
         output_for_mdn = tf.reshape(output_for_mdn, [-1, self.num_mixture * 3])
 
         return predicted_restart_flag,output_for_mdn
@@ -204,9 +202,14 @@ class LSTM(object):
         self.initial_state = self.cell.zero_state(batch_size=self.batch_size, dtype=tf.float32)
         
     def define_placeholder(self):
-        self.batch_obs = tf.placeholder(dtype=tf.float32, shape=[self.batch_size, self.seq_length, self.latent_size], name="batch_enc_frames")
-        self.batch_action = tf.placeholder(dtype=tf.float32, shape=[self.batch_size, self.seq_length], name="batch_action")
-        self.batch_restart_flags = tf.placeholder(dtype=tf.float32, shape=[self.batch_size, self.seq_length], name="batch_restart")
+        #the batch data must be full, (remove the -1)
+        self.batch_obs = tf.placeholder(dtype=tf.float32, shape=[self.batch_size, self.seq_length+1, self.latent_size], name="batch_enc_frames")
+        self.batch_action = tf.placeholder(dtype=tf.float32, shape=[self.batch_size, self.seq_length+1], name="batch_action")
+        self.batch_restart_flags = tf.placeholder(dtype=tf.float32, shape=[self.batch_size, self.seq_length+1], name="batch_restart")
+
+        input_obs = self.batch_obs[:, 0:-1, :]
+        input_action = self.batch_action[:, 0:-1]
+        input_res_flag = self.batch_restart_flags[:, 0:-1]
 
         self.target_obs = self.batch_obs[:, 1:, :]
         self.target_restart = self.batch_restart_flags[:, 1:]
@@ -214,11 +217,11 @@ class LSTM(object):
         # Concatenates input_obs,input_action_input_restart in one single vector
         #input_seq:  Tensor("concat:0", shape=(100, 999, 66), dtype=float32)
         #self.input_seq = shape=(self.latent_size, self.seq_length, latent_size+act+rest)
-        self.input_seq = tf.concat([    self.batch_obs,
-                                        tf.reshape(self.batch_action, [self.batch_size, self.seq_length, 1]),
-                                        tf.reshape(self.batch_restart_flags, [self.batch_size, self.seq_length, 1])    
+        self.input_seq = tf.concat([    input_obs,
+                                        tf.reshape(input_action, [self.batch_size, self.seq_length, 1]),
+                                        tf.reshape(input_res_flag, [self.batch_size, self.seq_length, 1])    
                                     ], axis=2)
-    
+
     def init_sess(self):
         init_vars = [tf.local_variables_initializer(), tf.global_variables_initializer()]
         gpu_options = tf.GPUOptions(allow_growth=True)
@@ -230,3 +233,72 @@ class LSTM(object):
         t_vars = tf.trainable_variables()
         for v in t_vars:
             print(v.name) 
+
+
+    # Collect assignment op to variable for restoring weights from file
+    def collect_assign_ops(self):
+        #list of all trainable variables
+        t_vars = tf.trainable_variables()
+
+        for var in t_vars:
+            # the shape of the variable
+            pshape = var.get_shape() 
+
+            # use pshape to set placeholder shape
+            pl = tf.placeholder(tf.float32, pshape, var.name[:-2]+'_placeholder')
+
+            # store in assign_op the assignment of placeholder to variable (next I will use this operation by feeding variable weights into placeholder)
+            assign_op = var.assign(pl) 
+
+            #map all assignments to the relative var
+            self.assign_ops[var] = (assign_op, pl) 
+
+    #######################################
+    #routines to store model
+    #######################################
+    '''
+    def get_model_params(self):
+        model_params = []
+        t_vars = tf.trainable_variables()
+        for var in t_vars:
+            p = self.sess.run(var) #get weights of this variable
+            params = np.round(p*10000).astype(np.int).tolist()
+            model_params.append(params)
+        return model_params
+
+
+    def save_json(self, jsonfile='models/vae.json'):
+        model_params = self.get_model_params()
+        qparams = []
+        for p in model_params:
+            qparams.append(p)
+        with open(jsonfile, 'wt') as outfile:
+            json.dump(qparams, outfile, sort_keys=True, indent=0, separators=(',', ': '))
+        print("Model saved!")
+
+    def load_json(self, jsonfile='models/vae.json'):
+        with open(jsonfile, 'r') as f:
+            params = json.load(f)
+        self.set_model_params(params)
+        print("Model loaded!")
+
+    
+    
+    def set_model_params(self, params):
+        t_vars = tf.trainable_variables()
+        idx = 0
+        for var in t_vars:
+            #get the variable shape 
+            pshape = tuple(var.get_shape().as_list()) 
+            
+            # get the parameter values
+            p = np.array(params[idx]) 
+            assert pshape == p.shape, "inconsistent shape"
+
+            #get assignment operation between variable and placeholder from dictionary
+            assign_op, pl = self.assign_ops[var] 
+
+            #feed loaded value into placeholder and assign it to the variable
+            self.sess.run(assign_op, feed_dict={pl.name: p/10000.})  
+            idx += 1
+    '''
