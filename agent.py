@@ -38,13 +38,7 @@ dataset.load_dataset(complete = False)
 #print("Storing dataset!")
 #dataset.store_encoded_dataset(frame_only=True, complete=False)
 
-#batch_frames = dataset.get_frames_batches() 
+#get batches from dataset 
 batch_encoded_frames,batch_actions,batch_reset = dataset.split_dataset_into_batches()
 
-print("batch_encoded_frames: ",batch_encoded_frames.shape)
-print("batch_actions :",batch_actions.shape)
-print("batch_reset: ",batch_reset.shape)
-
 lstm = lstm.LSTM(dataset)
-
-

@@ -10,17 +10,19 @@ import json
 class LSTM(object):
     
     def __init__(self,dataset):
-        self.latent_size = parameters.LATENT_SIZE
+        #structural data
         self.dataset = dataset
 
+        #parameters
+        self.latent_size = parameters.LATENT_SIZE
         self.num_mixture = parameters.MIXTURE 
         self.latent_size = parameters.LATENT_SIZE
         self.seq_length = parameters.SEQ_LENGTH - 1 # leave last timestap for the target. X from 0 to N-1 and Y from 1 to N
         self.input_size = parameters.INPUT_SIZE    
         self.dim_cell_state = parameters.DIM_CELL_STATE
-        self.tiny = parameters.TINY         
         self.learning_rate = parameters.LSTM_LEARNING_RATE
         self.batch_size = parameters.LSTM_BATCH_SIZE
+        #self.tiny = parameters.TINY         
 
         #session
         self.sess = None
@@ -38,9 +40,16 @@ class LSTM(object):
 
         #lstm cell
         self.cell = None
-        self.initial_state = None
+        self.zero_state = None # to initialize cell to zeros
+        self.initial_state = None #the firts step of a sequence
         self.outputs = None #for each time stamp collect lstm state (c,h) each one with shape (batch_size,lstm_state)
-        
+        self.predicted_restart_flag = None
+
+        #mdn
+        self.log_mix_coef = None
+        self.mean = None
+        self.logstd = None
+
         #loss value
         self.z_cost = None
         self.reset_cost = None
@@ -54,18 +63,47 @@ class LSTM(object):
                 self.init_cell()
                 self.define_placeholder()
                 self.unroll()
-                predicted_restart_flag,output_for_mdn = self.activation_function_RNN()
-                self.mdn(output_for_mdn,predicted_restart_flag)
+                output_for_mdn = self.activation_function_RNN()
+                self.mdn(output_for_mdn)
                 self.init_sess()
                 self.collect_assign_ops()
                 self.load_json()
                 self.train_lstm_mdn()
                 self.test_lstm()
 
+    
+    # Nome provvisorio
+    def get_data(self,enc_state,act,done_flag):
+
+        #qui deve ricrearsi un nuovo grafo di computazione con i parametri di batch size = 1 e seq_len = 2
+        # riga 69: hps_sample = hps_model._replace(batch_size=1, max_seq_len=2, use_recurrent_dropout=0, is_training=0)
+
+        prev_z = np.zeros((1, 1, self.seq_length))
+        prev_z[0][0] = enc_state
+
+        prev_action = np.zeros((1, 1))
+        prev_action[0] = act
+    
+        prev_restart = np.ones((1, 1))
+        prev_restart[0] = done_flag
+        
+        #I do not feed the lstm state because the class do it for me automatically
+        feed = {
+            self.batch_obs: prev_z,
+            self.batch_action: prev_action,
+            self.batch_restart_flags: prev_restart, 
+        }
+
+        [log_mix_coef, mean, logstd, predicted_restart_flag] = self.sess.run([self.log_mix_coef,self.mean,self.logstd,self.predicted_restart_flag],feed)    
+        
+        print("log_mix_coef: ", log_mix_coef.shape)
+        print("mean: ", mean.shape)
+        print("logstd: ", logstd.shape)
+        print("predicted_restart_flag: ", predicted_restart_flag.shape)
+
 
     def test_lstm(self):
         batch_encoded_frames,batch_actions,batch_reset = self.dataset.split_dataset_into_batches()                    
-        self.load_json()
         
         total_cost = self.sess.run(self.total_cost, {self.batch_obs: batch_encoded_frames[0], self.batch_action: batch_actions[0],self.batch_restart_flags: batch_reset[0]})
         print("total_cost: ", total_cost)
@@ -75,20 +113,22 @@ class LSTM(object):
     def train_lstm_mdn(self):
         batch_encoded_frames,batch_actions,batch_reset = self.dataset.split_dataset_into_batches()            
         
-        for i in range(10+1):
+        for i in range(1,500000000+1):
             for b in range(len(batch_encoded_frames)):
                 z_cost,reset_cost,_,total_cost = self.sess.run([self.z_cost, self.reset_cost, self.optimizer,self.total_cost], {self.batch_obs: batch_encoded_frames[b], self.batch_action: batch_actions[b],self.batch_restart_flags: batch_reset[b]})
             
-            print("Epoch: ", i)
-            print("total_cost: ", total_cost)
 
             if i%10 == 0:
+                print("Epoch: ", i)
+                print("total_cost: ", total_cost)
+            
+            if i%100 == 0:        
                 self.save_json()
         
 
     #this is directly from https://github.com/hardmaru/WorldModelsExperiments/blob/master/doomrnn/doomrnn.py
     # I didn't find the specific formula online 
-    def z_loss_func(self,log_mix_coef,mean,logstd):
+    def z_loss_func(self):
         # reshape target data so that it is compatible with prediction shape
         # reshape in ordert to have a lot of vectors with a single dimension
         # from shape=(100, 499, 64) to shape=(3193600, 1)
@@ -98,39 +138,38 @@ class LSTM(object):
         logSqrtTwoPI = np.log(np.sqrt(2.0 * np.pi))
 
         #tf_lognormal have shape=(3193600, 5) (broadcast flat_target_z to mean)
-        tf_lognormal = -0.5 * ((flat_target_z - mean) / tf.exp(logstd)) ** 2 - logstd - logSqrtTwoPI      
+        tf_lognormal = -0.5 * ((flat_target_z - self.mean) / tf.exp(self.logstd)) ** 2 - self.logstd - logSqrtTwoPI      
         
         #v.shape==(3193600, 1)
-        v = tf.reduce_logsumexp(log_mix_coef + tf_lognormal, 1, keepdims=True)
+        v = tf.reduce_logsumexp(self.log_mix_coef + tf_lognormal, 1, keepdims=True)
 
         return -tf.reduce_mean(v)
 
-    def restart_loss_fun(self,predicted_restart_flag):
+    def restart_loss_fun(self):
         # from shape=(50000,) to shape=(50000,1)
         flat_target_restart = tf.reshape(self.target_restart, [-1, 1])
 
         r_cost = tf.nn.sigmoid_cross_entropy_with_logits(labels=flat_target_restart,
-                                                                logits=tf.reshape(predicted_restart_flag,[-1, 1]))
+                                                                logits=tf.reshape(self.predicted_restart_flag,[-1, 1]))
         # factor of importance for restart=1 rare case for loss
         #factor = tf.ones_like(r_cost) + flat_target_restart * (self.hps.restart_factor-1.0)
         #return tf.reduce_mean(tf.multiply(factor, r_cost))
 
         return tf.reduce_mean(r_cost)
 
-    def mdn(self,mdn_input,predicted_restart_flag):
+    def mdn(self,mdn_input):
         #mdn_input = # shape=(3193600, 15)
 
         #extract the parameters of each of 5 gaussian
         #each one have shape(3193600, 5)
-        #PERCHÉ DICE CHE IN OUTPUT HA GIA IL LOGMIX? NON DOVREI IO FARE IL LOG DEL RISULTATO?
-        log_mix_coef, mean, logstd = tf.split(mdn_input, 3, 1) 
+        self.log_mix_coef, self.mean, self.logstd = tf.split(mdn_input, 3, 1) 
 
         #apply softmax function over the mix_coef but not directly, instead use the log trick to avoid multiplications and divisions (and overflow/underflow problems)
         #reduce_logsumexp: https://www.xarg.org/2016/06/the-log-sum-exp-trick-in-machine-learning/
-        log_mix_coef = log_mix_coef - tf.reduce_logsumexp(log_mix_coef, 1, keepdims=True)
+        self.log_mix_coef = self.log_mix_coef - tf.reduce_logsumexp(self.log_mix_coef, 1, keepdims=True)
         
-        self.z_cost = self.z_loss_func(log_mix_coef, mean, logstd)
-        self.reset_cost = self.restart_loss_fun(predicted_restart_flag)
+        self.z_cost = self.z_loss_func()
+        self.reset_cost = self.restart_loss_fun()
 
         self.total_cost = self.z_cost + self.reset_cost
 
@@ -147,7 +186,7 @@ class LSTM(object):
         with tf.variable_scope('lstm_activation_function'):
             output_w = tf.get_variable("rnn_output_w", [self.dim_cell_state, SIZE_FINAL_OUTPUT])
             output_b = tf.get_variable("rnn_output_b", [SIZE_FINAL_OUTPUT])
-
+        
         #output: concatenate all batch data for each timestamp into one big vector with length = lstm_state. --> from (499,100,512) to  shape=(49900, 512)
         output = tf.reshape(tf.concat(self.outputs, axis=1), [-1, self.dim_cell_state])
 
@@ -157,7 +196,7 @@ class LSTM(object):
         output = tf.nn.xw_plus_b(output, output_w, output_b)
        
         #shape: (49900,)
-        predicted_restart_flag = output[:, 0] #the first dimension will take care of restart flags
+        self.predicted_restart_flag = output[:, 0] #the first dimension will take care of restart flags
 
         #shape:  (49900, 960)
         output_for_mdn = output[:, 1:] #the output values expect the restart_flags in first dimension            
@@ -165,9 +204,13 @@ class LSTM(object):
         # shape=(3193600, 15): reshape data into a 15dimensional vector (num gaussian mixtrue * parameters to indicate a gaussian mixture)
         output_for_mdn = tf.reshape(output_for_mdn, [-1, self.num_mixture * 3])
 
-        return predicted_restart_flag,output_for_mdn
+        return output_for_mdn
 
 
+    # invece di gestire l'addestramente un frame alla volta lui lo fa tutto insieme, (tutto il batch (vettorializzando) per tutta la sequenza (unrollando nel ciclo))
+    # e poi accoda tutti i risultati in unico vettore lunghissimo. E' lo stesso che encodare un frame alla volta ma cosi fai prima
+    # 
+    # Ogni cella prende (stato_cella_preced,z, azione,reset_flag) e da in output lo (stato_cella, i dati da dare alla MDN per produrre i successivi 500 frame(500,64,15)
     def unroll(self):
         with tf.variable_scope("lstm_unroll"):
             # split input for time_step: create a "self.seq_length" long list of  (self.batch_size, latent_size+act+rest) tensor from input_seq
@@ -175,15 +218,11 @@ class LSTM(object):
             inputs = tf.unstack(self.input_seq, axis=1)
 
             state = self.initial_state
-            zero_c, zero_h = self.initial_state
+            zero_c, zero_h = self.zero_state
             outputs = []
             prev = None
 
             for i in range(self.seq_length):
-                #if i > 0:
-                    #Set the current variable scope to true
-                #    tf.get_variable_scope().reuse_variables()
-
                 # for current i-th time stamp check for each entry of batch if restart_flag is setted to 1  
                 # boolean vector of length "batch_size". Indicates with true if that sequence is intial sequences
                 restart_flag = tf.greater(self.batch_restart_flags[:, i], 0.5)
@@ -196,14 +235,16 @@ class LSTM(object):
                 h = tf.where(restart_flag, zero_h, h)
 
                 inp = inputs[i]
-
                     
                 # feed current input and the state of previous cell (setted to 0 if the episode is resetted) 
+                # state is based on C and H (each one with shape of (batch_size,lstm_state)) while OUTPUT is a single element with shape (batch_state,lstm_state) 
                 output, state = self.cell(inp, tf.nn.rnn_cell.LSTMStateTuple(c, h))
+
                 outputs.append(output)
                 
-            #self.final_state:  LSTMStateTuple(c=tensor(shape=(100, 512)), h=Tensor(shape=(100, 512))
-                    #self.final_state = state  per ora non mi serve salvarmelo
+            # self.initial_state: set the initial state for the next rollout 
+            # LSTMStateTuple(c=tensor(shape=(100, 512)), h=Tensor(shape=(100, 512))
+            self.initial_state = state
             #self.outputs: a list long "seq_len" of lstm states (each one of shape=(batch_size, lstm_state)) 
             self.outputs = outputs
 
@@ -213,13 +254,18 @@ class LSTM(object):
         
         # the state of LSTM is based on two element. C and H each other zero-filled tensors with shape of (batch_size, dim_cell_state) 
         # LSTMStateTuple(c=<tf.Tensor 'LSTMCellZeroState/zeros:0' shape=(100, 512) dtype=float32>, h=<tf.Tensor 'LSTMCellZeroState/zeros_1:0' shape=(100, 512) dtype=float32>)
-        self.initial_state = self.cell.zero_state(batch_size=self.batch_size, dtype=tf.float32)
-        
+        self.zero_state = self.cell.zero_state(batch_size=self.batch_size, dtype=tf.float32)
+
+        #set the initial_state to zero for the first rollout
+        self.initial_state = self.zero_state
+
     def define_placeholder(self):
         #the batch data must be full, (remove the -1)
+        #shape=[None, None, self.latent_size] -> [batch_size, seq_length+1,self.latent_size] 
         self.batch_obs = tf.placeholder(dtype=tf.float32, shape=[self.batch_size, self.seq_length+1, self.latent_size], name="batch_enc_frames")
         self.batch_action = tf.placeholder(dtype=tf.float32, shape=[self.batch_size, self.seq_length+1], name="batch_action")
         self.batch_restart_flags = tf.placeholder(dtype=tf.float32, shape=[self.batch_size, self.seq_length+1], name="batch_restart")
+
 
         input_obs = self.batch_obs[:, 0:-1, :]
         input_action = self.batch_action[:, 0:-1]
@@ -232,8 +278,8 @@ class LSTM(object):
         #input_seq:  Tensor("concat:0", shape=(100, 999, 66), dtype=float32)
         #self.input_seq = shape=(self.latent_size, self.seq_length, latent_size+act+rest)
         self.input_seq = tf.concat([    input_obs,
-                                        tf.reshape(input_action, [self.batch_size, self.seq_length, 1]),
-                                        tf.reshape(input_res_flag, [self.batch_size, self.seq_length, 1])    
+                                        tf.reshape(input_action, [input_obs.shape[0], input_obs.shape[1], 1]),
+                                        tf.reshape(input_res_flag, [input_obs.shape[0], input_obs.shape[1], 1])    
                                     ], axis=2)
 
     def init_sess(self):
