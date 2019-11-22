@@ -47,29 +47,43 @@ class LSTM(object):
         self.total_cost = None
         self.optimizer = None
 
-        with tf.variable_scope('mdn_rnn', reuse=True):
+        with tf.variable_scope('lstm', reuse=False):
             self.graph = tf.Graph() 
             with self.graph.as_default():
                 #init routines
                 self.init_cell()
                 self.define_placeholder()
-                self.forward_pass()
+                self.unroll()
                 predicted_restart_flag,output_for_mdn = self.activation_function_RNN()
                 self.mdn(output_for_mdn,predicted_restart_flag)
                 self.init_sess()
                 self.collect_assign_ops()
-                #self.train_lstm_mdn()
-                #self.get_parameters()
+                self.load_json()
+                self.train_lstm_mdn()
+                self.test_lstm()
+
+
+    def test_lstm(self):
+        batch_encoded_frames,batch_actions,batch_reset = self.dataset.split_dataset_into_batches()                    
+        self.load_json()
+        
+        total_cost = self.sess.run(self.total_cost, {self.batch_obs: batch_encoded_frames[0], self.batch_action: batch_actions[0],self.batch_restart_flags: batch_reset[0]})
+        print("total_cost: ", total_cost)
+
+
 
     def train_lstm_mdn(self):
         batch_encoded_frames,batch_actions,batch_reset = self.dataset.split_dataset_into_batches()            
         
-        for i in range(0,400):
-            z_cost,reset_cost,_,total_cost = self.sess.run([self.z_cost, self.reset_cost, self.optimizer,self.total_cost], {self.batch_obs: batch_encoded_frames[0], self.batch_action: batch_actions[0],self.batch_restart_flags: batch_reset[0]})
+        for i in range(10+1):
+            for b in range(len(batch_encoded_frames)):
+                z_cost,reset_cost,_,total_cost = self.sess.run([self.z_cost, self.reset_cost, self.optimizer,self.total_cost], {self.batch_obs: batch_encoded_frames[b], self.batch_action: batch_actions[b],self.batch_restart_flags: batch_reset[b]})
+            
             print("Epoch: ", i)
-            #print("z_cost: ", z_cost)
-            #print("Reset_cost: ", reset_cost)
             print("total_cost: ", total_cost)
+
+            if i%10 == 0:
+                self.save_json()
         
 
     #this is directly from https://github.com/hardmaru/WorldModelsExperiments/blob/master/doomrnn/doomrnn.py
@@ -130,7 +144,7 @@ class LSTM(object):
         SIZE_FINAL_OUTPUT = self.latent_size * (self.num_mixture * 3) + 1 
         
 
-        with tf.variable_scope('Activation_function_RNN'):
+        with tf.variable_scope('lstm_activation_function'):
             output_w = tf.get_variable("rnn_output_w", [self.dim_cell_state, SIZE_FINAL_OUTPUT])
             output_b = tf.get_variable("rnn_output_b", [SIZE_FINAL_OUTPUT])
 
@@ -154,8 +168,8 @@ class LSTM(object):
         return predicted_restart_flag,output_for_mdn
 
 
-    def forward_pass(self):
-        with tf.variable_scope("rnn_forward_pass"):
+    def unroll(self):
+        with tf.variable_scope("lstm_unroll"):
             # split input for time_step: create a "self.seq_length" long list of  (self.batch_size, latent_size+act+rest) tensor from input_seq
             #len(inputs.shape(self.batch_size, latent_size+act+rest)) = self.seq_length
             inputs = tf.unstack(self.input_seq, axis=1)
@@ -166,9 +180,9 @@ class LSTM(object):
             prev = None
 
             for i in range(self.seq_length):
-                if i > 0:
+                #if i > 0:
                     #Set the current variable scope to true
-                    tf.get_variable_scope().reuse_variables()
+                #    tf.get_variable_scope().reuse_variables()
 
                 # for current i-th time stamp check for each entry of batch if restart_flag is setted to 1  
                 # boolean vector of length "batch_size". Indicates with true if that sequence is intial sequences
@@ -253,10 +267,12 @@ class LSTM(object):
             #map all assignments to the relative var
             self.assign_ops[var] = (assign_op, pl) 
 
+            print(var)
+        
     #######################################
     #routines to store model
     #######################################
-    '''
+    
     def get_model_params(self):
         model_params = []
         t_vars = tf.trainable_variables()
@@ -267,7 +283,7 @@ class LSTM(object):
         return model_params
 
 
-    def save_json(self, jsonfile='models/vae.json'):
+    def save_json(self, jsonfile='models/lstm.json'):
         model_params = self.get_model_params()
         qparams = []
         for p in model_params:
@@ -276,7 +292,7 @@ class LSTM(object):
             json.dump(qparams, outfile, sort_keys=True, indent=0, separators=(',', ': '))
         print("Model saved!")
 
-    def load_json(self, jsonfile='models/vae.json'):
+    def load_json(self, jsonfile='models/lstm.json'):
         with open(jsonfile, 'r') as f:
             params = json.load(f)
         self.set_model_params(params)
@@ -300,5 +316,5 @@ class LSTM(object):
 
             #feed loaded value into placeholder and assign it to the variable
             self.sess.run(assign_op, feed_dict={pl.name: p/10000.})  
+            
             idx += 1
-    '''
