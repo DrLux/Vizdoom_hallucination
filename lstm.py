@@ -9,20 +9,17 @@ import json
 
 class LSTM(object):
     
-    def __init__(self,dataset):
-        #structural data
-        self.dataset = dataset
-
+    def __init__(self,seq_len = parameters.SEQ_LENGTH, batch_size = parameters.LSTM_BATCH_SIZE):
         #parameters
+        self.seq_length = seq_len -1# total step are 499, the total batch size is 499+1 (without training total step and total batch size could be the same size). We must leave last timestap for the target. X from 0 to N-1 and Y from 1 to N
+        self.batch_size = batch_size
         self.latent_size = parameters.LATENT_SIZE
         self.num_mixture = parameters.MIXTURE 
         self.latent_size = parameters.LATENT_SIZE
-        self.seq_length = parameters.SEQ_LENGTH - 1 # leave last timestap for the target. X from 0 to N-1 and Y from 1 to N
         self.input_size = parameters.INPUT_SIZE    
         self.dim_cell_state = parameters.DIM_CELL_STATE
         self.learning_rate = parameters.LSTM_LEARNING_RATE
-        self.batch_size = parameters.LSTM_BATCH_SIZE
-        #self.tiny = parameters.TINY         
+        self.global_step = None
 
         #session
         self.sess = None
@@ -32,6 +29,10 @@ class LSTM(object):
         self.batch_obs = None
         self.batch_action = None
         self.batch_restart_flags = None
+
+        self.input_obs = None #for inference do not need to feed the entire batch but we just need the input
+        self.input_action = None
+        self.input_res_flag = None
 
         self.target_obs = None
         self.target_restart = None
@@ -44,11 +45,12 @@ class LSTM(object):
         self.initial_state = None #the firts step of a sequence
         self.outputs = None #for each time stamp collect lstm state (c,h) each one with shape (batch_size,lstm_state)
         self.predicted_restart_flag = None
-
+        
         #mdn
         self.log_mix_coef = None
         self.mean = None
         self.logstd = None
+        self.actual_learn_rate = None
 
         #loss value
         self.z_cost = None
@@ -56,73 +58,43 @@ class LSTM(object):
         self.total_cost = None
         self.optimizer = None
 
-        with tf.variable_scope('lstm', reuse=False):
-            self.graph = tf.Graph() 
-            with self.graph.as_default():
-                #init routines
-                self.init_cell()
-                self.define_placeholder()
-                self.unroll()
-                output_for_mdn = self.activation_function_RNN()
-                self.mdn(output_for_mdn)
-                self.init_sess()
-                self.collect_assign_ops()
-                self.load_json()
-                self.train_lstm_mdn()
-                self.test_lstm()
-
+        self.graph = tf.Graph() 
+        with self.graph.as_default():
+            #init routines
+            self.init_cell()
+            self.define_placeholder()
+            self.unroll()
+            output_for_mdn = self.activation_function_RNN()
+            self.mdn(output_for_mdn)
+            self.init_sess()
+            self.collect_assign_ops()  
     
-    # Nome provvisorio
-    def get_data(self,enc_state,act,done_flag):
-
-        #qui deve ricrearsi un nuovo grafo di computazione con i parametri di batch size = 1 e seq_len = 2
-        # riga 69: hps_sample = hps_model._replace(batch_size=1, max_seq_len=2, use_recurrent_dropout=0, is_training=0)
-
-        prev_z = np.zeros((1, 1, self.seq_length))
-        prev_z[0][0] = enc_state
-
-        prev_action = np.zeros((1, 1))
-        prev_action[0] = act
-    
-        prev_restart = np.ones((1, 1))
-        prev_restart[0] = done_flag
+    def train_lstm_mdn(self, batch_encoded_frames,batch_actions,batch_reset):       
         
-        #I do not feed the lstm state because the class do it for me automatically
-        feed = {
-            self.batch_obs: prev_z,
-            self.batch_action: prev_action,
-            self.batch_restart_flags: prev_restart, 
-        }
-
-        [log_mix_coef, mean, logstd, predicted_restart_flag] = self.sess.run([self.log_mix_coef,self.mean,self.logstd,self.predicted_restart_flag],feed)    
-        
-        print("log_mix_coef: ", log_mix_coef.shape)
-        print("mean: ", mean.shape)
-        print("logstd: ", logstd.shape)
-        print("predicted_restart_flag: ", predicted_restart_flag.shape)
-
-
-    def test_lstm(self):
-        batch_encoded_frames,batch_actions,batch_reset = self.dataset.split_dataset_into_batches()                    
-        
-        total_cost = self.sess.run(self.total_cost, {self.batch_obs: batch_encoded_frames[0], self.batch_action: batch_actions[0],self.batch_restart_flags: batch_reset[0]})
-        print("total_cost: ", total_cost)
-
-
-
-    def train_lstm_mdn(self):
-        batch_encoded_frames,batch_actions,batch_reset = self.dataset.split_dataset_into_batches()            
-        
-        for i in range(1,500000000+1):
+        #for i in range(1,500000000+1):
+        for epoch in range(1,parameters.LSTM_EPOCH_TRAIN):
             for b in range(len(batch_encoded_frames)):
-                z_cost,reset_cost,_,total_cost = self.sess.run([self.z_cost, self.reset_cost, self.optimizer,self.total_cost], {self.batch_obs: batch_encoded_frames[b], self.batch_action: batch_actions[b],self.batch_restart_flags: batch_reset[b]})
-            
+        
+                real_step = self.sess.run(self.global_step)
+                curr_learning_rate = (self.learning_rate - parameters.LSTM_MIN_LEARNING_RATE) * (parameters.LSTM_LEARNING_RATE_DECAY) ** real_step + parameters.LSTM_MIN_LEARNING_RATE
 
-            if i%10 == 0:
-                print("Epoch: ", i)
+                feed = {
+                    self.batch_obs: batch_encoded_frames[b],
+                    self.batch_action: batch_actions[b],
+                    self.batch_restart_flags: batch_reset[b],
+                    self.actual_learn_rate: curr_learning_rate
+                }
+                
+                z_cost,reset_cost,_,total_cost = self.sess.run([self.z_cost, self.reset_cost, self.optimizer,self.total_cost], feed)
+                self.sess.run(tf.assign(self.global_step, real_step+1))
+            
+            if epoch%10 == 0:
+                print("Epoch: ", epoch)
+                print("Real step: ", real_step)
+                print("Learning rate: ", curr_learning_rate)
                 print("total_cost: ", total_cost)
             
-            if i%100 == 0:        
+            if epoch%100 == 0:        
                 self.save_json()
         
 
@@ -173,7 +145,7 @@ class LSTM(object):
 
         self.total_cost = self.z_cost + self.reset_cost
 
-        self.optimizer = tf.train.AdamOptimizer(self.learning_rate).minimize(self.total_cost)
+        self.optimizer = tf.train.AdamOptimizer(self.actual_learn_rate).minimize(self.total_cost)
 
     #The output of rnn is processed with a linear activation function to produce MDN input
     def activation_function_RNN(self):
@@ -225,7 +197,7 @@ class LSTM(object):
             for i in range(self.seq_length):
                 # for current i-th time stamp check for each entry of batch if restart_flag is setted to 1  
                 # boolean vector of length "batch_size". Indicates with true if that sequence is intial sequences
-                restart_flag = tf.greater(self.batch_restart_flags[:, i], 0.5)
+                restart_flag = tf.greater(self.input_res_flag[:, i], 0.5)
                 
                 c, h = state
 
@@ -261,26 +233,30 @@ class LSTM(object):
 
     def define_placeholder(self):
         #the batch data must be full, (remove the -1)
-        #shape=[None, None, self.latent_size] -> [batch_size, seq_length+1,self.latent_size] 
+        #shape = [None, None, self.latent_size] -> [batch_size, seq_length,self.latent_size] 
+        #the initial batch must be 1 step more length to store also the targets (data from 0 to N, target from 1 to N+1)
         self.batch_obs = tf.placeholder(dtype=tf.float32, shape=[self.batch_size, self.seq_length+1, self.latent_size], name="batch_enc_frames")
         self.batch_action = tf.placeholder(dtype=tf.float32, shape=[self.batch_size, self.seq_length+1], name="batch_action")
         self.batch_restart_flags = tf.placeholder(dtype=tf.float32, shape=[self.batch_size, self.seq_length+1], name="batch_restart")
 
-
-        input_obs = self.batch_obs[:, 0:-1, :]
-        input_action = self.batch_action[:, 0:-1]
-        input_res_flag = self.batch_restart_flags[:, 0:-1]
+        self.input_obs = self.batch_obs[:, 0:-1, :]
+        self.input_action = self.batch_action[:, 0:-1]
+        self.input_res_flag = self.batch_restart_flags[:, 0:-1]
 
         self.target_obs = self.batch_obs[:, 1:, :]
         self.target_restart = self.batch_restart_flags[:, 1:]
 
         # Concatenates input_obs,input_action_input_restart in one single vector
-        #input_seq:  Tensor("concat:0", shape=(100, 999, 66), dtype=float32)
         #self.input_seq = shape=(self.latent_size, self.seq_length, latent_size+act+rest)
-        self.input_seq = tf.concat([    input_obs,
-                                        tf.reshape(input_action, [input_obs.shape[0], input_obs.shape[1], 1]),
-                                        tf.reshape(input_res_flag, [input_obs.shape[0], input_obs.shape[1], 1])    
+        self.input_seq = tf.concat([    self.input_obs,
+                                        tf.reshape(self.input_action, [self.input_obs.shape[0], self.seq_length, 1]),
+                                        tf.reshape(self.input_res_flag, [self.input_obs.shape[0], self.seq_length, 1])    
                                     ], axis=2)
+
+        # to implement the learning rate decay
+        self.actual_learn_rate = tf.Variable(self.learning_rate, trainable=False)
+        self.global_step = tf.Variable(0, name='global_step', trainable=False)
+        
 
     def init_sess(self):
         init_vars = [tf.local_variables_initializer(), tf.global_variables_initializer()]
@@ -316,20 +292,21 @@ class LSTM(object):
             print(var)
         
     #######################################
-    #routines to store model
+    # Routines to store model
     #######################################
     
     def get_model_params(self):
-        model_params = []
-        t_vars = tf.trainable_variables()
-        for var in t_vars:
-            p = self.sess.run(var) #get weights of this variable
-            params = np.round(p*10000).astype(np.int).tolist()
-            model_params.append(params)
-        return model_params
+        with self.graph.as_default():    
+            model_params = []
+            t_vars = tf.trainable_variables()
+            for var in t_vars:
+                p = self.sess.run(var) #get weights of this variable
+                params = np.round(p*10000).astype(np.int).tolist()
+                model_params.append(params)
+            return model_params
 
 
-    def save_json(self, jsonfile='models/lstm.json'):
+    def save_json(self, jsonfile='models/lstm.json'):        
         model_params = self.get_model_params()
         qparams = []
         for p in model_params:
@@ -337,30 +314,29 @@ class LSTM(object):
         with open(jsonfile, 'wt') as outfile:
             json.dump(qparams, outfile, sort_keys=True, indent=0, separators=(',', ': '))
         print("Model saved!")
-
+        
     def load_json(self, jsonfile='models/lstm.json'):
         with open(jsonfile, 'r') as f:
             params = json.load(f)
         self.set_model_params(params)
         print("Model loaded!")
-
-    
     
     def set_model_params(self, params):
-        t_vars = tf.trainable_variables()
-        idx = 0
-        for var in t_vars:
-            #get the variable shape 
-            pshape = tuple(var.get_shape().as_list()) 
-            
-            # get the parameter values
-            p = np.array(params[idx]) 
-            assert pshape == p.shape, "inconsistent shape"
+        with self.graph.as_default():
+            t_vars = tf.trainable_variables()
+            idx = 0
+            for var in t_vars:
+                #get the variable shape 
+                pshape = tuple(var.get_shape().as_list()) 
+                
+                # get the parameter values
+                p = np.array(params[idx]) 
+                assert pshape == p.shape, "inconsistent shape"
 
-            #get assignment operation between variable and placeholder from dictionary
-            assign_op, pl = self.assign_ops[var] 
+                #get assignment operation between variable and placeholder from dictionary
+                assign_op, pl = self.assign_ops[var] 
 
-            #feed loaded value into placeholder and assign it to the variable
-            self.sess.run(assign_op, feed_dict={pl.name: p/10000.})  
-            
-            idx += 1
+                #feed loaded value into placeholder and assign it to the variable
+                self.sess.run(assign_op, feed_dict={pl.name: p/10000.})  
+                
+                idx += 1

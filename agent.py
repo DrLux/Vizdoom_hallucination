@@ -7,6 +7,7 @@ import dataset #my file
 import vae #my file
 import lstm #my file
 import parameters #my file
+import lstm_doom_env #my file
 
 '''
 before run install vizdoom:
@@ -41,4 +42,10 @@ dataset.load_dataset(complete = False)
 #get batches from dataset 
 batch_encoded_frames,batch_actions,batch_reset = dataset.split_dataset_into_batches()
 
-lstm = lstm.LSTM(dataset)
+lstm = lstm.LSTM()
+lstm.load_json()
+lstm.train_lstm_mdn(batch_encoded_frames,batch_actions,batch_reset)
+
+# create my env
+#learned_env = lstm_doom_env.DOOM_LSTM_ENV(vae)
+#learned_env.get_data(batch_encoded_frames[0][0][0],batch_actions[0][0][0],batch_reset[0][0][0])

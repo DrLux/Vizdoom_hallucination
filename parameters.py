@@ -10,11 +10,14 @@ MIXTURE = 5 #self.num_mixture -> 5 mixtures
 LATENT_SIZE = 64 #hps.seq_width -> 64 channels
 INPUT_SIZE = LATENT_SIZE #size of input (latent vector )
 DIM_CELL_STATE = 512 #cell state
-LSTM_LEARNING_RATE = 0.0005
-TINY = 1e-6 # to avoid NaNs in logs
+LSTM_LEARNING_RATE = 0.001
+LSTM_LEARNING_RATE_DECAY = 0.99999
+LSTM_MIN_LEARNING_RATE=0.00001
+#TINY = 1e-6 # to avoid NaNs in logs
 RECURRENT_DROPOUT_PROB = 0.90
 LSTM_BATCH_SIZE = 100
 SEQ_LENGTH = 500 
+LSTM_EPOCH_TRAIN = 5000001
 
 #Dataset hyperparameters
 DATASET_SIZE =  500000
