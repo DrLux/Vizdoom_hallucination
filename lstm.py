@@ -68,6 +68,7 @@ class LSTM(object):
             self.mdn(output_for_mdn)
             self.init_sess()
             self.collect_assign_ops()  
+
     
     def train_lstm_mdn(self, batch_encoded_frames,batch_actions,batch_reset):       
         
@@ -88,13 +89,13 @@ class LSTM(object):
                 z_cost,reset_cost,_,total_cost = self.sess.run([self.z_cost, self.reset_cost, self.optimizer,self.total_cost], feed)
                 self.sess.run(tf.assign(self.global_step, real_step+1))
             
-            if epoch%10 == 0:
-                print("Epoch: ", epoch)
-                print("Real step: ", real_step)
-                print("Learning rate: ", curr_learning_rate)
-                print("total_cost: ", total_cost)
-            
-            if epoch%100 == 0:        
+            #if epoch%10 == 0:
+            print("Epoch: ", epoch)
+            print("Real step: ", real_step)
+            print("Learning rate: ", curr_learning_rate)
+            print("total_cost: ", total_cost)
+        
+            if epoch%5 == 0:        
                 self.save_json()
         
 
@@ -124,8 +125,8 @@ class LSTM(object):
         r_cost = tf.nn.sigmoid_cross_entropy_with_logits(labels=flat_target_restart,
                                                                 logits=tf.reshape(self.predicted_restart_flag,[-1, 1]))
         # factor of importance for restart=1 rare case for loss
-        #factor = tf.ones_like(r_cost) + flat_target_restart * (self.hps.restart_factor-1.0)
-        #return tf.reduce_mean(tf.multiply(factor, r_cost))
+        factor = tf.ones_like(r_cost) + flat_target_restart * (9.0)
+        r_cost = tf.multiply(factor, r_cost)
 
         return tf.reduce_mean(r_cost)
 
@@ -315,6 +316,7 @@ class LSTM(object):
             json.dump(qparams, outfile, sort_keys=True, indent=0, separators=(',', ': '))
         print("Model saved!")
         
+    #def load_json(self, jsonfile='models/lstm.json'):
     def load_json(self, jsonfile='models/lstm.json'):
         with open(jsonfile, 'r') as f:
             params = json.load(f)

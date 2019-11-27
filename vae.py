@@ -145,6 +145,8 @@ class VAE(object):
         return latent_vec
 
     def decode_latent_vec(self,latent_v):
+        if len(latent_v.shape) == 1:
+            latent_v.reshape(1, 64)
         reconstructed_frames = self.sess.run(self.output_batch, {self.latent_vec: latent_v})
         return reconstructed_frames
 
