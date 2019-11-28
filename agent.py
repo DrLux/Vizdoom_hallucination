@@ -47,7 +47,7 @@ dataset.load_dataset(complete = False)
 batch_encoded_frames,batch_actions,batch_reset = dataset.split_dataset_into_batches()
 
 lstm = lstm.LSTM()
-lstm.load_json()
+#lstm.load_json()
 lstm.train_lstm_mdn(batch_encoded_frames,batch_actions,batch_reset)
 
 '''

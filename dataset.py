@@ -21,14 +21,11 @@ class Dataset(object):
         self.vae_num_batches = parameters.VAE_NUM_BATCHES
         self.lstm_batch_size = parameters.LSTM_BATCH_SIZE
         self.chunck_size = parameters.SEQ_LENGTH
-
         
         self.frame_dataset = None
         self.action_dataset = None
         self.reset_dataset = None
         self.encoded_frame_dataset = None
-
-        self.num_batches = parameters.LSTM_NUM_BATCH
 
     #Crop image before store to dataset 
     #same preprocessing from orginal world_model source
@@ -112,15 +109,23 @@ class Dataset(object):
         self.action_dataset = raw_data["action"]
         self.reset_dataset = raw_data["reset"]
 
-        # update dataset size with the lenght of the loaded dataset
-        self.dataset_size = len(self.reset_dataset)
 
+        # reduce loaded dataset to dataset size_
+        if self.dataset_size < len(self.encoded_frame_dataset):
+            self.encoded_frame_dataset = self.encoded_frame_dataset[0:self.dataset_size]
+            self.action_dataset = self.action_dataset[0:self.dataset_size]
+            self.reset_dataset = self.reset_dataset[0:self.dataset_size]
+        elif self.dataset_size > len(self.encoded_frame_dataset):
+            self.dataset_size = len(self.encoded_frame_dataset)
+
+        print("len(self.encoded_frame_dataset): ", len(self.encoded_frame_dataset))
+        
         if self.frame_dataset is not None:
             print("Frames Dataset size: ",self.frame_dataset.shape)
         print("Encoded Frame Dataset size: ",self.encoded_frame_dataset.shape)
         print("Action Dataset size: ",self.action_dataset.shape)
         print("Reset Dataset size: ",self.reset_dataset.shape)
-        self.num_batches = parameters.LSTM_NUM_BATCH
+        self.num_batches = int(self.dataset_size/(self.lstm_batch_size * parameters.SEQ_LENGTH)) 
         print("Lstm Batch Size : ", self.lstm_batch_size)
         print("Num batches: ", self.num_batches)
 

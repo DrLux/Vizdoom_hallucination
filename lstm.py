@@ -6,6 +6,10 @@ import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 import json
 
+#for logging
+import logging
+import psutil
+        
 
 class LSTM(object):
     
@@ -40,6 +44,7 @@ class LSTM(object):
         self.input_seq = None #combine obs,action and batch_restart_flags into one single vector
 
         #lstm cell
+        self.curr_learn_rate = None
         self.cell = None
         self.zero_state = None # to initialize cell to zeros
         self.initial_state = None #the firts step of a sequence
@@ -58,6 +63,8 @@ class LSTM(object):
         self.total_cost = None
         self.optimizer = None
 
+        logging.basicConfig(filename='memory_leak.log',format='%(asctime)s - %(message)s', level=logging.INFO)    
+        
         self.graph = tf.Graph() 
         with self.graph.as_default():
             #init routines
@@ -70,34 +77,74 @@ class LSTM(object):
             self.collect_assign_ops()  
 
     
-    def train_lstm_mdn(self, batch_encoded_frames,batch_actions,batch_reset):       
+    def log_info(self,lr,zc,rc,tc,msg):
+        mem = dict(psutil.virtual_memory()._asdict())
+        #logging.info ('Memory available: {} ({}), learning_rate: {}, z_cost: {}, reset_cost: {}, total_cost: {} + {}'.format(mem["available"],mem["percent"],lr,zc,rc,tc,msg))
         
+        logging.info("#### {} #####".format(msg))
+        logging.info('Memory available: {} ({}%) ***'.format(mem["available"],mem["percent"]))
+        logging.info('learning_rate: {}'.format(lr))
+        logging.info('z_cost: {}'.format(zc))
+        logging.info('reset_cost: {}'.format(rc))
+        logging.info('total_cost: {} ***'.format(tc))
+        logging.info("#########\n")
+
+
+        print("#### {} #####".format(msg))
+        print('Memory available: {} ({}%) ***'.format(mem["available"],mem["percent"]))
+        print('learning_rate: {}'.format(lr))
+        print('z_cost: {}'.format(zc))
+        print('reset_cost: {}'.format(rc))
+        print('total_cost: {}  ***'.format(tc))
+        print("#########\n")
+
+    
+    def train_lstm_mdn(self, batch_encoded_frames,batch_actions,batch_reset):   
+        
+        self.graph.finalize() #no more node can be added to the graph (block memory leak)
+        file_to_store = 0
+        global_step = 0
+        curr_learn_rate = self.learning_rate
+
         #for i in range(1,500000000+1):
         for epoch in range(1,parameters.LSTM_EPOCH_TRAIN):
             for b in range(len(batch_encoded_frames)):
-        
-                real_step = self.sess.run(self.global_step)
-                curr_learning_rate = (self.learning_rate - parameters.LSTM_MIN_LEARNING_RATE) * (parameters.LSTM_LEARNING_RATE_DECAY) ** real_step + parameters.LSTM_MIN_LEARNING_RATE
-
+                
                 feed = {
                     self.batch_obs: batch_encoded_frames[b],
                     self.batch_action: batch_actions[b],
                     self.batch_restart_flags: batch_reset[b],
-                    self.actual_learn_rate: curr_learning_rate
+                    self.curr_learn_rate: curr_learn_rate
                 }
                 
-                z_cost,reset_cost,_,total_cost = self.sess.run([self.z_cost, self.reset_cost, self.optimizer,self.total_cost], feed)
-                self.sess.run(tf.assign(self.global_step, real_step+1))
-            
-            #if epoch%10 == 0:
+                z_cost,reset_cost,total_cost,_ = self.sess.run([self.z_cost, self.reset_cost, self.total_cost,self.optimizer], feed)
+                
+                global_step = self.sess.run(self.inc_global_step)
+                curr_learn_rate = (self.learning_rate - parameters.LSTM_MIN_LEARNING_RATE) * (parameters.LSTM_LEARNING_RATE_DECAY) ** global_step + parameters.LSTM_MIN_LEARNING_RATE
+
+            self.log_info(curr_learn_rate,z_cost,reset_cost,total_cost,"after run")
+                
             print("Epoch: ", epoch)
-            print("Real step: ", real_step)
-            print("Learning rate: ", curr_learning_rate)
-            print("total_cost: ", total_cost)
+            if epoch%15 == 0:
+                print("########## SAVIN FILE: ", file_to_store, "########\n\n")
+                self.log_info(curr_learn_rate,z_cost,reset_cost,total_cost,"Before store")
+
+                self.save_json("models/0/lstm.json")
+                
+                #backup 
+                if file_to_store == 0:
+                    self.save_json("models/0/lstm.json")
+                    file_to_store = 1
+                elif file_to_store == 1:
+                        self.save_json("models/1/lstm.json")
+                        file_to_store = 2
+                else:
+                    self.save_json("models/2/lstm.json")
+                    file_to_store = 0
+                self.log_info(curr_learn_rate,z_cost,reset_cost,total_cost,"After store")
+
         
-            if epoch%5 == 0:        
-                self.save_json()
-        
+                
 
     #this is directly from https://github.com/hardmaru/WorldModelsExperiments/blob/master/doomrnn/doomrnn.py
     # I didn't find the specific formula online 
@@ -106,7 +153,6 @@ class LSTM(object):
         # reshape in ordert to have a lot of vectors with a single dimension
         # from shape=(100, 499, 64) to shape=(3193600, 1)
         flat_target_z = tf.reshape(self.target_obs,[-1, 1])
-
 
         logSqrtTwoPI = np.log(np.sqrt(2.0 * np.pi))
 
@@ -130,6 +176,7 @@ class LSTM(object):
 
         return tf.reduce_mean(r_cost)
 
+    
     def mdn(self,mdn_input):
         #mdn_input = # shape=(3193600, 15)
 
@@ -146,7 +193,7 @@ class LSTM(object):
 
         self.total_cost = self.z_cost + self.reset_cost
 
-        self.optimizer = tf.train.AdamOptimizer(self.actual_learn_rate).minimize(self.total_cost)
+        self.optimizer = tf.train.AdamOptimizer(self.curr_learn_rate).minimize(self.total_cost)
 
     #The output of rnn is processed with a linear activation function to produce MDN input
     def activation_function_RNN(self):
@@ -255,8 +302,14 @@ class LSTM(object):
                                     ], axis=2)
 
         # to implement the learning rate decay
-        self.actual_learn_rate = tf.Variable(self.learning_rate, trainable=False)
-        self.global_step = tf.Variable(0, name='global_step', trainable=False)
+        self.curr_learn_rate = tf.Variable(self.learning_rate, trainable=False)
+        global_step = tf.Variable(0, name='global_step', trainable=False)
+        
+        # calculate new learning rate value
+        self.inc_global_step = tf.assign(global_step, global_step+1)
+
+
+
         
 
     def init_sess(self):
