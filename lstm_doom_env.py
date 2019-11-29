@@ -4,6 +4,8 @@ import lstm #my file
 import parameters #my file
 
 import numpy as np
+import matplotlib.pyplot as plt
+
 
 class DOOM_LSTM_ENV(object):
     def __init__(self,vae):
@@ -11,8 +13,12 @@ class DOOM_LSTM_ENV(object):
         self.seq_length = 2
         self.batch_size = 1
         self.temperature = 1.25 # train with this temperature
-
         self.memory = lstm.LSTM(seq_len = self.seq_length, batch_size = self.batch_size) #create new lstm, maintain the same struct of the lstm used for training (to load pretrained model) but ignore the targets data 
+        self.memory.load_json()
+        self.current_state = self.memory.sess.run(self.memory.zero_state)
+        self.restart = 0
+        self.frame_count = None
+        self.max_frame = 2100
 
     
     def get_mix_coef(self,log_mix_coef):
@@ -41,9 +47,14 @@ class DOOM_LSTM_ENV(object):
         return next_z
         
     
-     
-    def step(self,enc_state,act,done_flag):
+    def reset(self):
+        self.restart = 0
+        self.current_state = self.memory.sess.run(self.memory.zero_state)
 
+
+
+    def step(self,enc_state,act,done_flag):
+        
         prev_z = np.zeros((1, 1, parameters.LATENT_SIZE))
         prev_z[0][0] = enc_state
 
@@ -58,9 +69,11 @@ class DOOM_LSTM_ENV(object):
             self.memory.input_obs: prev_z,
             self.memory.input_action: prev_action,
             self.memory.input_res_flag: prev_restart, 
+            self.memory.initial_state: self.current_state
+            #self.memory.initial_state: self.memory.sess.run(self.memory.zero_state)
         }
 
-        [log_mix_coef, mean, logstd, predicted_restart_flag] = self.memory.sess.run([self.memory.log_mix_coef,self.memory.mean,self.memory.logstd,self.memory.predicted_restart_flag],feed)    
+        [log_mix_coef, mean, logstd, predicted_restart_flag, self.current_state] = self.memory.sess.run([self.memory.log_mix_coef,self.memory.mean,self.memory.logstd,self.memory.predicted_restart_flag,self.memory.next_state],feed)    
         
         new_z = self.sample_new_z(log_mix_coef,mean,logstd)
 
@@ -72,3 +85,37 @@ class DOOM_LSTM_ENV(object):
             done = True
 
         return new_z,reward,done
+
+    
+    def genetare_sequence(self,initial_state):
+        total_len_seq = 100
+        actions = np.random.randint(2, size=total_len_seq)
+
+        generated_frames = []
+
+        new_z,reward,done = self.step(initial_state,0,0)
+        generated_frames.append(new_z)
+
+
+        for i in range(total_len_seq):
+            new_z,reward,done = self.step(new_z,actions[i],done)
+            generated_frames.append(new_z)
+
+        return generated_frames
+
+    def z_to_img(self,z):
+        decoded = self.eyesight.decode_latent_vec(z)
+        choosed_img = self.eyesight.post_process_frame(decoded)
+        return choosed_img
+
+
+    def game(self,initial_state):
+        done = False
+        new_z = initial_state
+
+        while done == False:
+            act = input()
+            new_z,reward,done = self.step(initial_state,0,done)
+            img = self.z_to_img(new_z)
+            imgplot = plt.imshow(img)
+            plt.show()

@@ -81,6 +81,7 @@ class LSTM(object):
         mem = dict(psutil.virtual_memory()._asdict())
         #logging.info ('Memory available: {} ({}), learning_rate: {}, z_cost: {}, reset_cost: {}, total_cost: {} + {}'.format(mem["available"],mem["percent"],lr,zc,rc,tc,msg))
         
+        '''
         logging.info("#### {} #####".format(msg))
         logging.info('Memory available: {} ({}%) ***'.format(mem["available"],mem["percent"]))
         logging.info('learning_rate: {}'.format(lr))
@@ -88,6 +89,7 @@ class LSTM(object):
         logging.info('reset_cost: {}'.format(rc))
         logging.info('total_cost: {} ***'.format(tc))
         logging.info("#########\n")
+        '''
 
 
         print("#### {} #####".format(msg))
@@ -99,25 +101,32 @@ class LSTM(object):
         print("#########\n")
 
     
+    #def test_lstm(self, )
+
+    
     def train_lstm_mdn(self, batch_encoded_frames,batch_actions,batch_reset):   
         
-        self.graph.finalize() #no more node can be added to the graph (block memory leak)
+        #self.graph.finalize() #no more node can be added to the graph (block memory leak)
         file_to_store = 0
         global_step = 0
         curr_learn_rate = self.learning_rate
 
         #for i in range(1,500000000+1):
         for epoch in range(1,parameters.LSTM_EPOCH_TRAIN):
+
+            batch_initial_state = self.sess.run(self.initial_state)
+
             for b in range(len(batch_encoded_frames)):
                 
                 feed = {
                     self.batch_obs: batch_encoded_frames[b],
                     self.batch_action: batch_actions[b],
                     self.batch_restart_flags: batch_reset[b],
+                    self.initial_state: batch_initial_state,
                     self.curr_learn_rate: curr_learn_rate
                 }
                 
-                z_cost,reset_cost,total_cost,_ = self.sess.run([self.z_cost, self.reset_cost, self.total_cost,self.optimizer], feed)
+                z_cost,reset_cost,total_cost,batch_initial_state,_ = self.sess.run([self.z_cost, self.reset_cost, self.total_cost,self.next_state,self.optimizer], feed)
                 
                 global_step = self.sess.run(self.inc_global_step)
                 curr_learn_rate = (self.learning_rate - parameters.LSTM_MIN_LEARNING_RATE) * (parameters.LSTM_LEARNING_RATE_DECAY) ** global_step + parameters.LSTM_MIN_LEARNING_RATE
@@ -125,11 +134,11 @@ class LSTM(object):
             self.log_info(curr_learn_rate,z_cost,reset_cost,total_cost,"after run")
                 
             print("Epoch: ", epoch)
-            if epoch%15 == 0:
+            if epoch%20 == 0:
                 print("########## SAVIN FILE: ", file_to_store, "########\n\n")
                 self.log_info(curr_learn_rate,z_cost,reset_cost,total_cost,"Before store")
 
-                self.save_json("models/0/lstm.json")
+                self.save_json("models/lstm.json")
                 
                 #backup 
                 if file_to_store == 0:
@@ -147,7 +156,6 @@ class LSTM(object):
                 
 
     #this is directly from https://github.com/hardmaru/WorldModelsExperiments/blob/master/doomrnn/doomrnn.py
-    # I didn't find the specific formula online 
     def z_loss_func(self):
         # reshape target data so that it is compatible with prediction shape
         # reshape in ordert to have a lot of vectors with a single dimension
@@ -262,9 +270,7 @@ class LSTM(object):
 
                 outputs.append(output)
                 
-            # self.initial_state: set the initial state for the next rollout 
-            # LSTMStateTuple(c=tensor(shape=(100, 512)), h=Tensor(shape=(100, 512))
-            self.initial_state = state
+            self.next_state = state
             #self.outputs: a list long "seq_len" of lstm states (each one of shape=(batch_size, lstm_state)) 
             self.outputs = outputs
 
@@ -346,7 +352,7 @@ class LSTM(object):
             print(var)
         
     #######################################
-    # Routines to store model
+    # Methods to store model
     #######################################
     
     def get_model_params(self):

@@ -137,7 +137,7 @@ class VAE(object):
         norm_input_frame = np.float32(img.astype(np.float)/255.0)        
         
         #if img is a single image, add a batch dimension
-        if img.shape == 3:
+        if len(img.shape) == 3:
             input_batch = norm_input_frame.reshape(1, 64, 64, 3)
         else:
             input_batch = norm_input_frame
@@ -146,7 +146,7 @@ class VAE(object):
 
     def decode_latent_vec(self,latent_v):
         if len(latent_v.shape) == 1:
-            latent_v.reshape(1, 64)
+            latent_v = latent_v.reshape(1, 64)
         reconstructed_frames = self.sess.run(self.output_batch, {self.latent_vec: latent_v})
         return reconstructed_frames
 
