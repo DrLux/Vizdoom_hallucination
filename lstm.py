@@ -179,7 +179,7 @@ class LSTM(object):
         r_cost = tf.nn.sigmoid_cross_entropy_with_logits(labels=flat_target_restart,
                                                                 logits=tf.reshape(self.predicted_restart_flag,[-1, 1]))
         # factor of importance for restart=1 rare case for loss
-        factor = tf.ones_like(r_cost) + flat_target_restart * (9.0)
+        factor = tf.ones_like(r_cost) + flat_target_restart * (20.0)
         r_cost = tf.multiply(factor, r_cost)
 
         return tf.reduce_mean(r_cost)

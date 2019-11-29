@@ -116,6 +116,7 @@ class DOOM_LSTM_ENV(object):
         while done == False:
             act = input()
             new_z,reward,done = self.step(initial_state,0,done)
+            print("Done: ", done)
             img = self.z_to_img(new_z)
             imgplot = plt.imshow(img)
             plt.show()
