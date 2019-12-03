@@ -20,9 +20,6 @@ before run install vizdoom:
 
 #def get_info_from_env(env):
     
-
-
-
 #Tensorflow version: 1.14.0
 
 # Init
@@ -32,29 +29,34 @@ dataset = dataset.Dataset(env)
 vae = vae.VAE(dataset)
 vae.load_json()
 
-#print("Creating dataset!")
-#dataset.create_new_dataset(render = False)
+lstm = lstm.LSTM()
+#lstm.load_json()
 
-print("Loading dataset!")
-dataset.load_dataset(complete = False)
 
-#print("Encoding dataset!")
-#vae.encode_dataset()
 
-#print("Storing dataset!")
-#dataset.store_encoded_dataset(frame_only=True, complete=False)
+## Create and store dataset ###
+#    #print("Creating dataset!")
+#    #dataset.create_new_dataset(render = False)
+#    #vae.encode_dataset()
+#
+#    #print("Storing dataset!")
+#    #dataset.store_encoded_dataset(frame_only=False, complete=True)
+###############
+
+
+# Load dataset
+dataset.load_dataset(complete=True)
+
 
 #get batches from dataset 
 batch_encoded_frames,batch_actions,batch_reset = dataset.split_dataset_into_batches()
 
-lstm = lstm.LSTM()
-lstm.load_json()
 lstm.train_lstm_mdn(batch_encoded_frames,batch_actions,batch_reset)
 
 # create my env
 learned_env = lstm_doom_env.DOOM_LSTM_ENV(vae)
 
-
+'''
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 
@@ -66,12 +68,13 @@ while i < 1:
     new_frame = vae.post_process_frame(decoded_state)
     imgplot = plt.imshow(new_frame)
     Image.fromarray(new_frame).show()
-    '''
+
     print("mix_coef: ", log_mix_coef)
     for c in range(len(log_mix_coef)):
         print("true z: ",batch_encoded_frames[0][0][0][c])
         print("idx: ", np.where(log_mix_coef[c] == max(log_mix_coef[c])))
         print("my z: ",new_state[c])
-    '''
+    
 
     i += 1
+'''

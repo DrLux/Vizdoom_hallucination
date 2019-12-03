@@ -106,12 +106,11 @@ class LSTM(object):
     
     def train_lstm_mdn(self, batch_encoded_frames,batch_actions,batch_reset):   
         
-        #self.graph.finalize() #no more node can be added to the graph (block memory leak)
+        self.graph.finalize() #no more node can be added to the graph (block memory leak)
         file_to_store = 0
         global_step = 0
         curr_learn_rate = self.learning_rate
 
-        #for i in range(1,500000000+1):
         for epoch in range(1,parameters.LSTM_EPOCH_TRAIN):
 
             batch_initial_state = self.sess.run(self.initial_state)
