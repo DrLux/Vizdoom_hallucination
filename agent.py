@@ -34,28 +34,29 @@ lstm = lstm.LSTM()
 
 
 
-## Create and store dataset ###
-#    #print("Creating dataset!")
-#    #dataset.create_new_dataset(render = False)
-#    #vae.encode_dataset()
-#
-#    #print("Storing dataset!")
-#    #dataset.store_encoded_dataset(frame_only=False, complete=True)
-###############
+#Create and store dataset ###
+#print("Creating dataset!")
+#dataset.create_new_dataset(render = False)
+#vae.encode_dataset()
+
+#print("Storing dataset!")
+#dataset.store_encoded_dataset(frame_only=False, complete=True)
+
 
 
 # Load dataset
 dataset.load_dataset(complete=True)
 
+#vae.encode_dataset()
 
 #get batches from dataset 
-batch_encoded_frames,batch_actions,batch_reset = dataset.split_dataset_into_batches()
+#batch_encoded_frames,batch_actions,batch_reset = dataset.split_dataset_into_batches()
 
-lstm.train_lstm_mdn(batch_encoded_frames,batch_actions,batch_reset)
+#lstm.train_lstm_mdn(batch_encoded_frames,batch_actions,batch_reset)
 
 # create my env
 learned_env = lstm_doom_env.DOOM_LSTM_ENV(vae)
-
+learned_env.game(dataset.encoded_frame_dataset[0])
 '''
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg

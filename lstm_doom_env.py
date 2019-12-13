@@ -5,6 +5,10 @@ import parameters #my file
 
 import numpy as np
 import matplotlib.pyplot as plt
+from gym.envs.classic_control import rendering
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+from PIL import Image
 
 
 class DOOM_LSTM_ENV(object):
@@ -12,7 +16,7 @@ class DOOM_LSTM_ENV(object):
         self.eyesight = vae
         self.seq_length = 2
         self.batch_size = 1
-        self.temperature = 1.25 # train with this temperature
+        self.temperature = 1.05 # train with this temperature
         self.memory = lstm.LSTM(seq_len = self.seq_length, batch_size = self.batch_size) #create new lstm, maintain the same struct of the lstm used for training (to load pretrained model) but ignore the targets data 
         self.memory.load_json()
         self.current_state = self.memory.sess.run(self.memory.zero_state)
@@ -22,7 +26,7 @@ class DOOM_LSTM_ENV(object):
 
     
     def get_mix_coef(self,log_mix_coef):
-        logmix2 = np.copy(log_mix_coef)#/self.temperature 
+        logmix2 = np.copy(log_mix_coef)/self.temperature 
         logmix2 -= logmix2.max() #normilize
         logmix2 = np.exp(logmix2) #inverse of log
         logmix2 /= logmix2.sum(axis=1).reshape(parameters.LATENT_SIZE, 1)
@@ -64,7 +68,6 @@ class DOOM_LSTM_ENV(object):
         prev_restart = np.ones((1, 1))
         prev_restart[0] = done_flag
         
-        #I do not feed the lstm state because the class do it for me automatically
         feed = {
             self.memory.input_obs: prev_z,
             self.memory.input_action: prev_action,
@@ -74,7 +77,7 @@ class DOOM_LSTM_ENV(object):
         }
 
         [log_mix_coef, mean, logstd, predicted_restart_flag, self.current_state] = self.memory.sess.run([self.memory.log_mix_coef,self.memory.mean,self.memory.logstd,self.memory.predicted_restart_flag,self.memory.next_state],feed)    
-        
+
         new_z = self.sample_new_z(log_mix_coef,mean,logstd)
 
         reward = 1
@@ -105,18 +108,28 @@ class DOOM_LSTM_ENV(object):
 
     def z_to_img(self,z):
         decoded = self.eyesight.decode_latent_vec(z)
-        choosed_img = self.eyesight.post_process_frame(decoded)
-        return choosed_img
+        decoded = self.eyesight.post_process_frame(decoded)
+        return decoded
 
 
     def game(self,initial_state):
+        import random
         done = False
         new_z = initial_state
+        viewer = None
+        counter = 0
+        act = 0
 
-        while done == False:
-            act = input()
-            new_z,reward,done = self.step(initial_state,0,done)
-            print("Done: ", done)
+        while counter <= 10000:
+            act = random.randint(0,1)
+            new_z,reward,done = self.step(new_z,act,done)
+            if done:
+                print("Done: ", done)
             img = self.z_to_img(new_z)
-            imgplot = plt.imshow(img)
-            plt.show()
+            #img = Image.fromarray(img, 'RGB')
+            counter += 1
+            if viewer is None:
+                viewer = rendering.SimpleImageViewer()
+            viewer.imshow(img)
+            #act = input("inserire input")
+            
