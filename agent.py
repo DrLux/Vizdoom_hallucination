@@ -11,6 +11,10 @@ import lstm_doom_env #my file
 
 from PIL import Image 
 
+import pynput
+from pynput import keyboard
+from pynput.keyboard import Key, Controller
+
 '''
 before run install vizdoom:
     git clone https://github.com/simontudo/vizdoomgym.git
@@ -24,13 +28,28 @@ before run install vizdoom:
 
 # Init
 env = gym.make('VizdoomTakeCover-v0')
-#info_env = get_info_from_env(env)
-dataset = dataset.Dataset(env) 
+
+def key_press(key):
+    global act
+    if key==Key.left:
+        act[0] = 0
+        print('human key left.')
+    if key==Key.right:
+        act[0] = 1
+        print('human key right.')
+
+def key_release(key):
+    global act
+    act[0] = 0.5
+
+       
 vae = vae.VAE(dataset)
 vae.load_json()
 
 lstm = lstm.LSTM()
+
 #lstm.load_json()
+
 
 
 
@@ -45,7 +64,7 @@ lstm = lstm.LSTM()
 
 
 # Load dataset
-dataset.load_dataset(complete=True)
+######dataset.load_dataset(complete=True)
 
 #vae.encode_dataset()
 
@@ -56,26 +75,55 @@ dataset.load_dataset(complete=True)
 
 # create my env
 learned_env = lstm_doom_env.DOOM_LSTM_ENV(vae)
-learned_env.game(dataset.encoded_frame_dataset[0])
-'''
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
 
-i = 0
-while i < 1:
-    new_state,reward,done = learned_env.step(batch_encoded_frames[0][0][0],batch_actions[0][0][0],batch_reset[0][0][0])
-    new_state = batch_encoded_frames[0][0][0]
-    decoded_state = vae.decode_latent_vec(new_state)
-    new_frame = vae.post_process_frame(decoded_state)
-    imgplot = plt.imshow(new_frame)
-    Image.fromarray(new_frame).show()
+initial_frame = [-0.91315293,  1.2236881,   0.17299916,  0.10731404,  0.5680487,  -0.49503556,
+  2.0010276,   1.1171637,   1.3731774,  -0.8313165,   2.2233753,   0.46785936,
+  0.15495707,  0.4782607 ,  0.7822306,   0.35097674, -0.75028044, -0.16706006,
+  1.3053885 , -1.2359716 , -1.5131272,   0.63023174, -1.9062142 ,  0.00694928,
+ -0.714864  , -0.7387922 , -0.3647223,  -0.5580204 , -0.25286108, -0.434293,
+  0.7238775 ,  0.40156108, -0.5594823,  -1.2085987 , -0.29880083,  0.6063757,
+  0.5483104 ,  0.9401099 , -0.7121125,  -0.46440625, -0.36887395,  0.16015734,
+ -1.1010108 , -0.461102  ,  1.4397485,  -0.45861107, -0.29993907, -0.5142053,
+  0.09924194,  1.0011657 ,  0.08839466,  1.226267  , -1.2972203,  -1.8790438,
+ -0.12851784, -0.20420484, -1.1443287 , -0.00856118, -1.1295127,   0.897585,
+  0.8546144 , -1.0315335 ,  0.14407876,  1.5014809]
 
-    print("mix_coef: ", log_mix_coef)
-    for c in range(len(log_mix_coef)):
-        print("true z: ",batch_encoded_frames[0][0][0][c])
-        print("idx: ", np.where(log_mix_coef[c] == max(log_mix_coef[c])))
-        print("my z: ",new_state[c])
-    
 
-    i += 1
-'''
+#initial_frame = dataset.encoded_frame_dataset[0]
+
+input("Press Enter to init session")
+
+
+from gym.envs.classic_control import rendering
+dataset = dataset.Dataset(env) 
+
+done = False
+viewer = None
+act = np.array([0])
+act[0] = 0.8
+obs = env.reset()
+counter = 0
+viewer = None
+
+with keyboard.Listener(
+    on_press=key_press,
+    on_release=key_release) as listener:
+
+    while counter <= 7000:
+        obs,rew,done,_ = env.step(act)
+        if done:
+            env.reset()
+            print("You DIED")
+        counter += 1
+        if viewer == None:
+            viewer = rendering.SimpleImageViewer()
+        if counter == 4000:
+            input("Press Enter to Crop and resize frames!")
+        if counter >= 4000:
+            obs = dataset.preprocess_frame(obs)
+        viewer.imshow(obs)
+
+
+input("Press Enter to start the Dream Env!")
+
+learned_env.game(initial_frame)

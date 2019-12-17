@@ -9,22 +9,39 @@ from gym.envs.classic_control import rendering
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from PIL import Image
+import random
+import gym
 
 
-class DOOM_LSTM_ENV(object):
+import pynput
+from pynput import keyboard
+from pynput.keyboard import Key, Controller
+
+class DOOM_LSTM_ENV(gym.Env):
+    
     def __init__(self,vae):
         self.eyesight = vae
         self.seq_length = 2
         self.batch_size = 1
-        self.temperature = 1.05 # train with this temperature
+        self.temperature = 0.2 # tplay witrh 1.10
         self.memory = lstm.LSTM(seq_len = self.seq_length, batch_size = self.batch_size) #create new lstm, maintain the same struct of the lstm used for training (to load pretrained model) but ignore the targets data 
         self.memory.load_json()
         self.current_state = self.memory.sess.run(self.memory.zero_state)
         self.restart = 0
         self.frame_count = None
-        self.max_frame = 2100
+        self.action = np.array([0.5])
+        
+    def key_press(self,key):#,mod):
+        if key==Key.left:
+            self.action[0] = -1.0
+            print('human key left.')
+        if key==Key.right:
+            self.action[0] = +1.0
+            print('human key right.')
 
-    
+    def key_release(self,key):#, mod):
+        self.action[0] = 0.5
+            
     def get_mix_coef(self,log_mix_coef):
         logmix2 = np.copy(log_mix_coef)/self.temperature 
         logmix2 -= logmix2.max() #normilize
@@ -89,47 +106,38 @@ class DOOM_LSTM_ENV(object):
 
         return new_z,reward,done
 
-    
-    def genetare_sequence(self,initial_state):
-        total_len_seq = 100
-        actions = np.random.randint(2, size=total_len_seq)
-
-        generated_frames = []
-
-        new_z,reward,done = self.step(initial_state,0,0)
-        generated_frames.append(new_z)
+    #def generate_initial_state(self):
 
 
-        for i in range(total_len_seq):
-            new_z,reward,done = self.step(new_z,actions[i],done)
-            generated_frames.append(new_z)
-
-        return generated_frames
 
     def z_to_img(self,z):
         decoded = self.eyesight.decode_latent_vec(z)
         decoded = self.eyesight.post_process_frame(decoded)
         return decoded
 
-
+    
     def game(self,initial_state):
-        import random
         done = False
         new_z = initial_state
         viewer = None
         counter = 0
         act = 0
 
-        while counter <= 10000:
-            act = random.randint(0,1)
-            new_z,reward,done = self.step(new_z,act,done)
-            if done:
-                print("Done: ", done)
-            img = self.z_to_img(new_z)
-            #img = Image.fromarray(img, 'RGB')
-            counter += 1
-            if viewer is None:
-                viewer = rendering.SimpleImageViewer()
-            viewer.imshow(img)
-            #act = input("inserire input")
+        # Collect events until released
+        with keyboard.Listener(
+                on_press=self.key_press,
+                on_release=self.key_release) as listener:
+
+            while counter <= 4000:
+                #act = random.randint(0,1)
+                new_z,reward,done = self.step(new_z,self.action[0],done)
+                if done:
+                    print("You DIED")
+                img = self.z_to_img(new_z)
+                #img = Image.fromarray(img, 'RGB')
+                counter += 1
+                if viewer is None:
+                    viewer = rendering.SimpleImageViewer()
+                viewer.imshow(img)
+                #act = input("inserire input")
             
