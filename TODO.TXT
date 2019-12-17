@@ -1,2 +1,0 @@
-TO DO
-- Creare il decay learning rate per lstm ed allenarla bene
