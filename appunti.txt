@@ -1,0 +1,31 @@
+Stored Data:
+    self.train_set_frames:  (140, 500, 64, 64, 3)
+    self.val_set_frames:  (30, 500, 64, 64, 3)
+    self.test_set_frames:  (30, 500, 64, 64, 3)
+    
+    self.test_set_act:  (30, 500, 6)
+    self.val_set_act:  (30, 500, 6)
+    self.train_set_act:  (140, 500, 6)
+    
+    self.test_set_res:  (30, 500)
+    self.val_set_res:  (30, 500)
+    self.train_set_res:  (140, 500)
+
+
+Loaded data:
+    self.train_set_frames:  (140, 500, 64, 64, 3)
+    self.val_set_frames:  (30, 500, 64, 64, 3)
+    self.test_set_frames:  (30, 500, 64, 64, 3)
+
+
+Vae Training set:
+    len(batches):  1000 -> ci sono 1000 batches
+    batches[0].shape:  (100, 64, 64, 3) <- ogni batch ha questa forma
+
+
+Totale dei frame in cui vi è un reward: 7849.0
+
+Addestramento
+
+30 epoche a 0.004 e raggiungo tra 4 e 5
+poi 10 a 0.0008
